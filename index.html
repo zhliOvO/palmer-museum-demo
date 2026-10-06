@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Palmer Museum of Art — 3D Demo</title>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@1.145.0/Build/Cesium/Widgets/widgets.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+/* ————————————————————————————————————————————————
+   Palmer Museum of Art — Cesium ion / 3D Tiles viewer
+   Single dark tool chrome: the globe is the subject,
+   the UI stays out of its way.
+   ———————————————————————————————————————————————— */
+:root{
+  color-scheme: dark;
+  --ground:      #0d1118;
+  --panel:       #161d29;
+  --panel-hi:    #1e2837;
+  --hairline:    #2b3547;
+  --ink:         #e7edf6;
+  --ink-muted:   #8496ae;
+  --ink-faint:   #5b6b82;
+  --brass:       #d9a441;   /* accent — the museum's bronze/limestone palette */
+  --arch:        #d9a441;
+  --struc:       #e0705c;
+  --mep:         #4fb3a8;
+  --site:        #86a85a;
+  --danger:      #e0705c;
+  --radius:      8px;
+  --rail:        320px;
+}
+
+*{ box-sizing: border-box; }
+html, body{ height:100%; margin:0; }
+body{
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+/* —— globe ————————————————————————————————— */
+#cesiumContainer{ position:absolute; inset:0; }
+.cesium-viewer-bottom{ display:none; }          /* we redraw credits ourselves */
+.cesium-widget-credits{ font-size:10px; opacity:.5; }
+
+/* —— top strip ————————————————————————————— */
+.topbar{
+  position:absolute; top:0; left:0; right:0; z-index:8;
+  display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
+  background: linear-gradient(180deg, rgba(13,17,24,.94), rgba(13,17,24,0));
+  pointer-events:none;
+}
+.topbar > *{ pointer-events:auto; }
+.mark{ display:flex; align-items:baseline; gap:10px; min-width:0; }
+.mark h1{
+  font-family:"Archivo", ui-sans-serif, system-ui, sans-serif;
+  font-weight:700; font-size:15px; letter-spacing:.01em; margin:0;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.mark .sub{
+  font-size:11px; color:var(--ink-faint); letter-spacing:.08em;
+  text-transform:uppercase; white-space:nowrap;
+}
+.readout{
+  margin-left:auto; display:flex; gap:14px; align-items:center;
+  font-family:"IBM Plex Mono", ui-monospace, monospace;
+  font-size:11px; color:var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.readout span b{ color:var(--ink); font-weight:500; }
+
+/* —— left rail ————————————————————————————— */
+.rail{
+  position:absolute; z-index:9;
+  top: calc(56px + env(safe-area-inset-top, 0px));
+  left:16px; bottom:16px; width:var(--rail);
+  display:flex; flex-direction:column; gap:12px;
+  overflow-y:auto; overscroll-behavior:contain;
+  padding-right:2px;
+}
+.card{
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(14px);
+  border:1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding:14px;
+}
+.card > h2{
+  font-family:"Archivo", sans-serif;
+  font-size:10px; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--ink-faint); margin:0 0 12px;
+}
+
+/* —— layer rows ———————————————————————————— */
+.layers{ display:flex; flex-direction:column; gap:2px; }
+.layer{
+  display:grid; grid-template-columns:auto 1fr auto; align-items:center;
+  gap:10px; padding:8px 6px; border-radius:6px;
+}
+.layer + .layer{ border-top:1px solid color-mix(in srgb, var(--hairline) 60%, transparent); }
+.layer.is-off{ opacity:.45; }
+.swatch{ width:3px; height:26px; border-radius:2px; background:var(--ink-faint); }
+.layer[data-key="combined"] .swatch{ background:var(--arch); }
+.layer[data-key="struc"] .swatch{ background:var(--struc); }
+.layer .name{ min-width:0; }
+.layer .name strong{ display:block; font-weight:500; font-size:13px; }
+.layer .name em{
+  display:block; font-style:normal; font-size:10.5px; color:var(--ink-faint);
+  font-family:"IBM Plex Mono", monospace; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis;
+}
+.layer .acts{ display:flex; gap:4px; align-items:center; }
+
+/* —— controls —————————————————————————————— */
+button{ font:inherit; color:inherit; cursor:pointer; }
+.btn{
+  background:var(--panel-hi); border:1px solid var(--hairline);
+  border-radius:6px; padding:6px 10px; font-size:12px; font-weight:500;
+  transition: background .12s ease, border-color .12s ease;
+}
+.btn:hover{ background:#26344a; border-color:#3b4b63; }
+.btn.primary{ background:var(--brass); border-color:var(--brass); color:#20180a; font-weight:600; }
+.btn.primary:hover{ background:#e8b356; border-color:#e8b356; }
+.btn.icon{ padding:4px 7px; font-size:11px; line-height:1.3; }
+.btn[aria-pressed="true"]{ background:#2f3f58; border-color:#4a5e7c; }
+:where(button, input, select, a):focus-visible{
+  outline:2px solid var(--brass); outline-offset:2px;
+}
+
+.toggle{ position:relative; width:34px; height:19px; flex:none; }
+.toggle input{
+  position:absolute; inset:0; margin:0; opacity:0; cursor:pointer; z-index:2;
+}
+.toggle .track{
+  position:absolute; inset:0; border-radius:99px;
+  background:#2c384c; border:1px solid var(--hairline); transition:background .15s ease;
+}
+.toggle .knob{
+  position:absolute; top:3px; left:3px; width:13px; height:13px; border-radius:50%;
+  background:var(--ink-muted); transition:transform .15s ease, background .15s ease;
+}
+.toggle input:checked ~ .track{ background:color-mix(in srgb, var(--brass) 38%, #2c384c); }
+.toggle input:checked ~ .knob{ transform:translateX(15px); background:var(--brass); }
+.toggle input:focus-visible ~ .track{ outline:2px solid var(--brass); outline-offset:2px; }
+
+/* —— height nudge ——————————————————————————— */
+.nudge{ display:none; grid-column:1 / -1; padding:2px 0 4px; }
+.layer.is-tuning .nudge{ display:block; }
+.nudge label{
+  display:flex; justify-content:space-between; font-size:10.5px;
+  color:var(--ink-faint); font-family:"IBM Plex Mono", monospace; margin-bottom:4px;
+}
+.nudge output{ color:var(--ink); font-variant-numeric:tabular-nums; }
+input[type="range"]{ width:100%; accent-color:var(--brass); }
+
+/* —— inspector ————————————————————————————— */
+#inspector .empty{ color:var(--ink-faint); font-size:12px; margin:0; }
+.props{ margin:0; font-size:12px; max-height:230px; overflow-y:auto; }
+.props div{
+  display:grid; grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);
+  gap:8px; padding:5px 0; border-top:1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
+}
+.props div:first-child{ border-top:0; }
+.props dt{ color:var(--ink-faint); overflow:hidden; text-overflow:ellipsis; }
+.props dd{
+  margin:0; font-family:"IBM Plex Mono", monospace; font-size:11px;
+  overflow-wrap:anywhere;
+}
+
+/* —— setup overlay ————————————————————————— */
+.setup{
+  position:absolute; inset:0; z-index:20;
+  display:grid; place-items:center; padding:20px;
+  background:rgba(8,11,16,.82); backdrop-filter:blur(6px);
+}
+.setup[hidden]{ display:none !important; }
+.setup-card{
+  width:min(560px, 100%); max-height:100%; overflow-y:auto;
+  background:var(--panel); border:1px solid var(--hairline);
+  border-radius:12px; padding:24px;
+}
+.setup-card h2{
+  font-family:"Archivo", sans-serif; font-size:19px; margin:0 0 6px; font-weight:700;
+  text-wrap:balance;
+}
+.setup-card .lede{ color:var(--ink-muted); font-size:13px; margin:0 0 20px; }
+.field{ margin-bottom:14px; }
+.field label{
+  display:block; font-size:11px; letter-spacing:.07em; text-transform:uppercase;
+  color:var(--ink-faint); margin-bottom:5px; font-weight:500;
+}
+.field input{
+  width:100%; background:var(--ground); color:var(--ink);
+  border:1px solid var(--hairline); border-radius:6px; padding:8px 10px;
+  font-family:"IBM Plex Mono", monospace; font-size:12.5px;
+}
+.field input::placeholder{ color:var(--ink-faint); }
+.grid4{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; }
+.setup-actions{ display:flex; gap:10px; align-items:center; margin-top:18px; }
+.setup-actions .note{ font-size:11px; color:var(--ink-faint); }
+details.help{ margin-top:18px; border-top:1px solid var(--hairline); padding-top:14px; }
+details.help summary{
+  cursor:pointer; font-size:12px; color:var(--brass); font-weight:500; list-style:none;
+}
+details.help summary::-webkit-details-marker{ display:none; }
+details.help summary::before{ content:"▸ "; }
+details.help[open] summary::before{ content:"▾ "; }
+details.help ol{ margin:12px 0 0; padding-left:18px; font-size:12.5px; color:var(--ink-muted); }
+details.help li{ margin-bottom:7px; }
+details.help code{
+  font-family:"IBM Plex Mono", monospace; font-size:11.5px;
+  background:var(--ground); padding:1px 5px; border-radius:3px; color:var(--ink);
+}
+
+.toast{
+  position:absolute; z-index:30; left:50%; transform:translateX(-50%);
+  bottom:24px; background:var(--panel-hi); border:1px solid var(--hairline);
+  border-radius:6px; padding:9px 14px; font-size:12.5px; max-width:min(460px, 90vw);
+}
+.toast[hidden]{ display:none !important; }
+.toast.err{ border-color:var(--danger); color:#ffc9be; }
+
+/* —— phone ————————————————————————————————— */
+@media (max-width: 760px){
+  :root{ --rail:auto; }
+  .rail{
+    left:0; right:0; bottom:0; top:auto;
+    max-height:52%; padding:0 12px calc(12px + env(safe-area-inset-bottom,0px));
+    background:linear-gradient(180deg, rgba(13,17,24,0), rgba(13,17,24,.9) 24px);
+  }
+  .readout{ display:none; }
+}
+@media (prefers-reduced-motion: reduce){
+  *{ transition-duration:.01ms !important; animation-duration:.01ms !important; }
+}
+</style>
+</head>
+<body>
+
+<div id="cesiumContainer"></div>
+
+<header class="topbar">
+  <div class="mark">
+    <h1>Palmer Museum of Art</h1>
+    <span class="sub">Record Models · 2025-05-05</span>
+  </div>
+  <div class="readout">
+    <span>lat <b id="ro-lat">—</b></span>
+    <span>lon <b id="ro-lon">—</b></span>
+    <span>eye <b id="ro-alt">—</b></span>
+  </div>
+</header>
+
+<div class="rail">
+
+  <section class="card">
+    <h2>Discipline models</h2>
+    <div class="layers" id="layers"></div>
+  </section>
+
+  <section class="card">
+    <h2>Scene</h2>
+    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+      <button class="btn" id="btn-home">Site view</button>
+      <button class="btn" id="btn-terrain" aria-pressed="true">Terrain</button>
+      <button class="btn" id="btn-osm" aria-pressed="false">Context buildings</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Inside the museum</h2>
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;">
+      <button class="btn primary" id="btn-cutaway">Cutaway plan</button>
+      <button class="btn" id="btn-inside">Walk inside</button>
+      <button class="btn" id="btn-hide" aria-pressed="false">Hide roofs &amp; trees</button>
+    </div>
+    <div class="nudge" style="display:block">
+      <label for="cut">section cut <output id="cut-v">off</output></label>
+      <input type="range" id="cut" min="330" max="346" step="0.25" value="346">
+    </div>
+  </section>
+
+  <section class="card" id="inspector">
+    <h2>Element</h2>
+    <p class="empty">Click any element in a tiled model to read its Revit properties.</p>
+    <dl class="props" hidden></dl>
+  </section>
+
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/cesium@1.145.0/Build/Cesium/Cesium.js"></script>
+<!-- token + asset IDs for the public demo -->
+<script src="config.js"></script>
+<script>
+window.CESIUM_BASE_URL = "https://cdn.jsdelivr.net/npm/cesium@1.145.0/Build/Cesium/";
+
+/* ══════════════════════════════════════════════════════════════
+   CONFIG — you can hard-code values here instead of using the
+   setup panel. Anything filled in below wins on first load.
+   ══════════════════════════════════════════════════════════════ */
+const CONFIG = window.PALMER_DEMO || { token: "", assets: {} };
+
+// Fill any blank asset IDs from palmer-assets.js (written by the upload script).
+if(window.PALMER_ASSETS){
+  for(const k in CONFIG.assets){
+    if(!CONFIG.assets[k] && window.PALMER_ASSETS[k]) CONFIG.assets[k] = String(window.PALMER_ASSETS[k]);
+  }
+}
+
+/* The new Palmer Museum at the Arboretum at Penn State,
+   650 Bigler Road, University Park PA 16802.
+   Ground: 362.6 m NAVD88 (USGS 3DEP) + GEOID18 −33.3 m ≈ 329 m ellipsoidal. */
+const SITE = { lon: -77.867955, lat: 40.806824, height: 329 };
+
+/* baseHeight: the 09-23 ion tiling added the Revit survey elevation
+   (362.6 m NAVD88) on top of the placement height, floating the building
+   ~363 m in the air. This shift puts the site topography on the terrain
+   (checked: Revit topo 329.4 m vs Cesium World Terrain 328.4 m). */
+const MODELS = [
+  { key:"combined", label:"Arch + Site + MEP", file:"Allied Works · Arup · 1.58 GB", baseHeight:-362.6 },
+  { key:"struc",    label:"Structural",        file:"Silman · 93 MB",                baseHeight:0      }
+];
+
+/* Measured in the tiled model after the height fix (ellipsoidal metres). */
+const BUILDING = { lon:-77.8681, lat:40.8066, mainFloor:335.85, roof:341.7 };
+
+/* Revit categories that block the view inside: roofs, ceilings, trees,
+   scope boxes, room/area/level markers, annotation. */
+const HIDE_FOR_INTERIOR = new Set([
+  "OST_Roofs","OST_Ceilings","OST_Planting","OST_VolumeOfInterest","OST_Rooms",
+  "OST_Levels","OST_Areas","OST_AreaSchemes","OST_TextNotes","OST_Lines",
+  "OST_RoomSeparationLines"
+]);
+
+const $ = (s, r=document) => r.querySelector(s);
+
+function toast(msg, isError){
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.toggle("err", !!isError);
+  t.hidden = false;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.hidden = true; }, isError ? 9000 : 4000);
+}
+
+/* ══════════════ viewer ══════════════════════════════════════ */
+let viewer, osmBuildings = null;
+const tilesets = {};   // key -> { tileset, offset, base, hideIds }
+let hideInterior = false;
+let sectionHeight = null;   // ellipsoidal metres, or null for no cut
+
+function bootViewer(){
+  viewer = new Cesium.Viewer("cesiumContainer", {
+    terrain: Cesium.Terrain.fromWorldTerrain(),
+    baseLayerPicker: false,
+    geocoder: false,
+    homeButton: false,
+    sceneModePicker: false,
+    navigationHelpButton: false,
+    timeline: false,
+    animation: false,
+    fullscreenButton: false,
+    infoBox: false,
+    selectionIndicator: false
+  });
+
+  viewer.scene.globe.depthTestAgainstTerrain = true;
+  viewer.scene.light = new Cesium.DirectionalLight({
+    direction: new Cesium.Cartesian3(0.35, -0.5, -0.79)
+  });
+
+  viewer.scene.postRender.addEventListener(flushPendingTiles);
+
+  flyHome(0);
+  wireReadout();
+  wirePicking();
+}
+
+function flyHome(seconds){
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(BUILDING.lon, BUILDING.lat - 0.0026, BUILDING.mainFloor + 150),
+    orientation: {
+      heading: Cesium.Math.toRadians(0),
+      pitch: Cesium.Math.toRadians(-32),
+      roll: 0
+    },
+    duration: seconds === undefined ? 2.2 : seconds
+  });
+}
+
+function wireReadout(){
+  const lat = $("#ro-lat"), lon = $("#ro-lon"), alt = $("#ro-alt");
+  viewer.camera.changed.addEventListener(() => {
+    const c = Cesium.Cartographic.fromCartesian(viewer.camera.positionWC);
+    if(!c) return;
+    lat.textContent = Cesium.Math.toDegrees(c.latitude).toFixed(5);
+    lon.textContent = Cesium.Math.toDegrees(c.longitude).toFixed(5);
+    alt.textContent = Math.round(c.height).toLocaleString() + " m";
+  });
+  viewer.camera.percentageChanged = 0.02;
+}
+
+/* —— click an element, read its Revit properties ——————————— */
+function wirePicking(){
+  const dl = $("#inspector .props"), empty = $("#inspector .empty");
+  const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+  handler.setInputAction(movement => {
+    const picked = viewer.scene.pick(movement.position);
+    dl.innerHTML = "";
+
+    if(!(picked instanceof Cesium.Cesium3DTileFeature)){
+      dl.hidden = true; empty.hidden = false;
+      empty.textContent = "Click any element in a tiled model to read its Revit properties.";
+      return;
+    }
+
+    const ids = picked.getPropertyIds();
+    if(!ids || !ids.length){
+      dl.hidden = true; empty.hidden = false;
+      empty.textContent = "That element carries no exposed properties. Tile with the "
+        + "“3D Tiles + Database” option to keep Revit metadata queryable.";
+      return;
+    }
+
+    ids.slice(0, 40).forEach(id => {
+      const v = picked.getProperty(id);
+      if(v === undefined || v === null || v === "") return;
+      const row = document.createElement("div");
+      const dt = document.createElement("dt"); dt.textContent = id;
+      const dd = document.createElement("dd"); dd.textContent = String(v);
+      row.append(dt, dd); dl.append(row);
+    });
+
+    empty.hidden = true; dl.hidden = false;
+  }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+}
+
+/* —— load one tileset ——————————————————————————————————— */
+async function addTileset(key, assetId){
+  try{
+    const ts = await Cesium.Cesium3DTileset.fromIonAssetId(Number(assetId));
+    viewer.scene.primitives.add(ts);
+    const model = MODELS.find(m => m.key === key);
+    tilesets[key] = { tileset: ts, offset: 0, base: model.baseHeight || 0, hideIds: categoryIdsToHide(ts) };
+    // tileVisible fires mid-render; touching feature show state there makes
+    // Cesium allocate a batch texture the current frame's draw commands
+    // don't have yet ("reading '_target'", render loop stops). Queue the
+    // tile and apply after the frame instead.
+    ts.tileVisible.addEventListener(tile => { if(hideInterior) pendingTiles.add([key, tile]); });
+    setHeight(key, 0);
+    markRow(key, true);
+    return ts;
+  }catch(err){
+    markRow(key, false, true);
+    toast("Asset " + assetId + " (" + key + ") did not load: " + (err && err.message ? err.message : err), true);
+    return null;
+  }
+}
+
+/* Shift a tileset vertically — BIM models rarely land on terrain
+   at exactly the right elevation on the first tiling pass. */
+function setHeight(key, metres){
+  const entry = tilesets[key];
+  if(!entry) return;
+  const ts = entry.tileset;
+  // Measure "up" at the site, not the tileset's bounding-sphere centre,
+  // which the stray far-away element drags off into the Atlantic.
+  const surface = Cesium.Cartesian3.fromDegrees(SITE.lon, SITE.lat, 0);
+  const target  = Cesium.Cartesian3.fromDegrees(SITE.lon, SITE.lat, entry.base + metres);
+  const delta   = Cesium.Cartesian3.subtract(target, surface, new Cesium.Cartesian3());
+  ts.modelMatrix = Cesium.Matrix4.fromTranslation(delta);
+  entry.offset = metres;
+  applySection(entry);
+}
+
+/* —— interior tools ————————————————————————————————————— */
+// iModel tiles carry the Revit category as a BigInt id; the tileset
+// metadata maps ids to OST_* names. Style expressions can't compare
+// BigInts, so features are shown/hidden one by one as tiles appear.
+function categoryIdsToHide(ts){
+  const ids = new Set();
+  try{
+    const md = ts.metadata;
+    const cid = md.getProperty("categoryIds"), cname = md.getProperty("categoryNames");
+    cid.forEach((id, i) => { if(HIDE_FOR_INTERIOR.has(cname[i])) ids.add(String(id)); });
+  }catch(e){ /* tileset without iModel metadata */ }
+  return ids;
+}
+
+const pendingTiles = new Set();
+function flushPendingTiles(){
+  if(!pendingTiles.size) return;
+  const batch = [...pendingTiles]; pendingTiles.clear();
+  batch.forEach(([key, tile]) => applyInteriorHiding(key, tile));
+}
+
+function applyInteriorHiding(key, tile){
+  const entry = tilesets[key], c = tile.content;
+  if(!entry || !entry.hideIds.size || !c || !c.featuresLength) return;
+  for(let i = 0; i < c.featuresLength; i++){
+    const f = c.getFeature(i);
+    const show = !(hideInterior && entry.hideIds.has(String(f.getProperty("category"))));
+    if(f.show !== show) f.show = show;
+  }
+}
+
+function setInteriorHiding(on){
+  hideInterior = on;
+  $("#btn-hide").setAttribute("aria-pressed", String(on));
+  Object.keys(tilesets).forEach(k => {
+    // re-run over tiles already loaded; new ones go through tileVisible
+    const walk = t => { if(t.contentReady) applyInteriorHiding(k, t); t.children.forEach(walk); };
+    walk(tilesets[k].tileset.root);
+  });
+  viewer.scene.requestRender();
+}
+
+// Horizontal section plane: keeps everything below `sectionHeight`.
+// The collection is created once and only toggled: replacing or clearing
+// tileset.clippingPlanes destroys its texture while compiled draw commands
+// still reference it, and CesiumJS 1.145 stops rendering ("reading '_target'").
+function applySection(entry){
+  const ts = entry.tileset;
+  if(!ts.clippingPlanes){
+    if(sectionHeight === null) return;
+    ts.clippingPlanes = new Cesium.ClippingPlaneCollection({
+      planes: [ new Cesium.ClippingPlane(new Cesium.Cartesian3(0, 0, -1), 0) ],
+      edgeWidth: 1.5,
+      edgeColor: Cesium.Color.fromCssColorString("#d9a441")
+    });
+  }
+  const cp = ts.clippingPlanes;
+  cp.enabled = sectionHeight !== null;
+  if(!cp.enabled) return;
+  const enu = Cesium.Transforms.eastNorthUpToFixedFrame(Cesium.Cartesian3.fromDegrees(SITE.lon, SITE.lat, 0));
+  const toTileset = Cesium.Matrix4.inverse(ts.root.computedTransform, new Cesium.Matrix4());
+  cp.modelMatrix = Cesium.Matrix4.multiply(toTileset, enu, new Cesium.Matrix4());
+  cp.get(0).distance = sectionHeight;
+}
+
+function setSection(height){
+  sectionHeight = height;
+  const slider = $("#cut"), out = $("#cut-v");
+  if(height === null){ slider.value = slider.max; out.textContent = "off"; }
+  else{
+    slider.value = String(height);
+    const rel = height - BUILDING.mainFloor;
+    out.textContent = (rel >= 0 ? "+" : "") + rel.toFixed(1) + " m above main floor";
+  }
+  Object.values(tilesets).forEach(applySection);
+}
+
+// Eye height in a main-floor gallery (display cases, track lights), looking
+// down its longest indoor sight line — found by probing the floor plan.
+const INSIDE_VIEW = { lon:-77.8683, lat:40.8068, heading:135 };
+
+function walkInside(){
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(INSIDE_VIEW.lon, INSIDE_VIEW.lat, BUILDING.mainFloor + 1.7),
+    orientation: { heading: Cesium.Math.toRadians(INSIDE_VIEW.heading), pitch: Cesium.Math.toRadians(-3), roll: 0 },
+    duration: 2.0
+  });
+}
+
+function cutaway(){
+  setInteriorHiding(true);
+  setSection(BUILDING.mainFloor + 2.6);
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(BUILDING.lon, BUILDING.lat - 0.0004, BUILDING.mainFloor + 90),
+    orientation: { heading: 0, pitch: Cesium.Math.toRadians(-68), roll: 0 },
+    duration: 2.0
+  });
+}
+
+/* ══════════════ rail UI ════════════════════════════════════ */
+function buildRail(){
+  const host = $("#layers");
+  host.innerHTML = "";
+
+  MODELS.forEach(m => {
+    const row = document.createElement("div");
+    row.className = "layer is-off";
+    row.dataset.key = m.key;
+    row.innerHTML = `
+      <span class="swatch"></span>
+      <span class="name"><strong>${m.label}</strong><em>${m.file}</em></span>
+      <span class="acts">
+        <button class="btn icon" data-act="zoom" title="Zoom to ${m.label}">⤢</button>
+        <button class="btn icon" data-act="tune" title="Adjust height" aria-pressed="false">↕</button>
+        <label class="toggle">
+          <input type="checkbox" id="vis-${m.key}" aria-label="Show ${m.label}">
+          <span class="track"></span><span class="knob"></span>
+        </label>
+      </span>
+      <div class="nudge">
+        <label for="h-${m.key}">height offset <output id="hv-${m.key}">0.0 m</output></label>
+        <input type="range" id="h-${m.key}" min="-60" max="60" step="0.5" value="0">
+      </div>`;
+    host.append(row);
+
+    row.querySelector(`#vis-${m.key}`).addEventListener("change", e => {
+      const entry = tilesets[m.key];
+      if(!entry){ e.target.checked = false; toast("No asset ID set for " + m.label + "."); return; }
+      entry.tileset.show = e.target.checked;
+      row.classList.toggle("is-off", !e.target.checked);
+    });
+
+    row.querySelector('[data-act="zoom"]').addEventListener("click", () => {
+      const entry = tilesets[m.key];
+      if(!entry){ toast("No asset ID set for " + m.label + "."); return; }
+      flyHome(1.6);   // not flyTo(tileset): a stray element ~2000 km out inflates its bounds
+    });
+
+    const tuneBtn = row.querySelector('[data-act="tune"]');
+    tuneBtn.addEventListener("click", () => {
+      const on = row.classList.toggle("is-tuning");
+      tuneBtn.setAttribute("aria-pressed", String(on));
+    });
+
+    const slider = row.querySelector(`#h-${m.key}`);
+    const out = row.querySelector(`#hv-${m.key}`);
+    slider.addEventListener("input", () => {
+      const v = Number(slider.value);
+      out.textContent = v.toFixed(1) + " m";
+      setHeight(m.key, v);
+    });
+  });
+}
+
+function markRow(key, ok, failed){
+  const row = document.querySelector(`.layer[data-key="${key}"]`);
+  if(!row) return;
+  const box = row.querySelector("input[type=checkbox]");
+  if(ok){ box.checked = true; row.classList.remove("is-off"); }
+  if(failed){ row.querySelector(".name em").textContent = "failed to load"; }
+}
+
+/* —— scene buttons ————————————————————————————————————— */
+function wireScene(){
+  $("#btn-home").addEventListener("click", () => flyHome());
+
+  const tBtn = $("#btn-terrain");
+  tBtn.addEventListener("click", async () => {
+    const on = tBtn.getAttribute("aria-pressed") !== "true";
+    tBtn.setAttribute("aria-pressed", String(on));
+    viewer.scene.setTerrain(on
+      ? Cesium.Terrain.fromWorldTerrain()
+      : new Cesium.Terrain(Promise.resolve(new Cesium.EllipsoidTerrainProvider())));
+  });
+
+  const oBtn = $("#btn-osm");
+  oBtn.addEventListener("click", async () => {
+    const on = oBtn.getAttribute("aria-pressed") !== "true";
+    oBtn.setAttribute("aria-pressed", String(on));
+    try{
+      if(!osmBuildings){
+        osmBuildings = await Cesium.createOsmBuildingsAsync();
+        viewer.scene.primitives.add(osmBuildings);
+      }
+      osmBuildings.show = on;
+    }catch(err){
+      oBtn.setAttribute("aria-pressed", "false");
+      toast("Context buildings unavailable: " + (err.message || err), true);
+    }
+  });
+
+
+  $("#btn-cutaway").addEventListener("click", cutaway);
+  $("#btn-inside").addEventListener("click", () => { setInteriorHiding(true); walkInside(); });
+  $("#btn-hide").addEventListener("click", () => setInteriorHiding(!hideInterior));
+  const cut = $("#cut");
+  cut.addEventListener("input", () => {
+    const v = Number(cut.value);
+    setSection(v >= Number(cut.max) ? null : v);
+  });
+}
+
+/* ══════════════ start ══════════════════════════════════════ */
+async function loadModels(){
+  Cesium.Ion.defaultAccessToken = CONFIG.token;
+  const jobs = MODELS
+    .filter(m => CONFIG.assets[m.key])
+    .map(m => addTileset(m.key, CONFIG.assets[m.key]));
+  const loaded = (await Promise.all(jobs)).filter(Boolean);
+  if(loaded.length) flyHome(2.0);
+}
+
+(function start(){
+  if(typeof Cesium === "undefined"){
+    document.body.innerHTML =
+      '<div style="padding:40px;font-family:system-ui;color:#e7edf6">' +
+      '<h1>CesiumJS did not load</h1><p>Check your network connection and reload.</p></div>';
+    return;
+  }
+  if(!CONFIG.token){
+    document.body.innerHTML =
+      '<div style="padding:40px;font-family:system-ui;color:#e7edf6">' +
+      '<h1>Demo not configured</h1><p>Put a Cesium ion token in <code>config.js</code>.</p></div>';
+    return;
+  }
+  // The token must be set before the viewer requests World Terrain.
+  Cesium.Ion.defaultAccessToken = CONFIG.token;
+  bootViewer();
+  buildRail();
+  wireScene();
+  loadModels();
+})();
+</script>
+</body>
+</html>
